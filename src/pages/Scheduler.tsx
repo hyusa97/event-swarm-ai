@@ -270,7 +270,7 @@ const Scheduler = () => {
                       {sp.topic && <p className="text-xs text-muted-foreground truncate">{sp.topic}</p>}
                       {sp.email && <p className="text-[10px] text-muted-foreground font-mono">{sp.email}</p>}
                     </div>
-                    <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => deleteItem("speakers", sp.id)}><Trash2 className="h-3 w-3 text-destructive" /></Button>
+                    <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => deleteSpeaker(sp.id)}><Trash2 className="h-3 w-3 text-destructive" /></Button>
                   </div>
                 ))}
               </div>
