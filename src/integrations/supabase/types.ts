@@ -146,6 +146,117 @@ export type Database = {
         }
         Relationships: []
       }
+      rooms: {
+        Row: {
+          capacity: number | null
+          created_at: string
+          id: string
+          name: string
+        }
+        Insert: {
+          capacity?: number | null
+          created_at?: string
+          id?: string
+          name: string
+        }
+        Update: {
+          capacity?: number | null
+          created_at?: string
+          id?: string
+          name?: string
+        }
+        Relationships: []
+      }
+      sessions: {
+        Row: {
+          conflict_note: string | null
+          created_at: string
+          description: string | null
+          duration_minutes: number
+          end_time: string | null
+          has_conflict: boolean
+          id: string
+          room_id: string | null
+          speaker_id: string | null
+          start_time: string | null
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          conflict_note?: string | null
+          created_at?: string
+          description?: string | null
+          duration_minutes?: number
+          end_time?: string | null
+          has_conflict?: boolean
+          id?: string
+          room_id?: string | null
+          speaker_id?: string | null
+          start_time?: string | null
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          conflict_note?: string | null
+          created_at?: string
+          description?: string | null
+          duration_minutes?: number
+          end_time?: string | null
+          has_conflict?: boolean
+          id?: string
+          room_id?: string | null
+          speaker_id?: string | null
+          start_time?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sessions_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "rooms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sessions_speaker_id_fkey"
+            columns: ["speaker_id"]
+            isOneToOne: false
+            referencedRelation: "speakers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      speakers: {
+        Row: {
+          bio: string | null
+          created_at: string
+          email: string | null
+          id: string
+          name: string
+          topic: string | null
+        }
+        Insert: {
+          bio?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          name: string
+          topic?: string | null
+        }
+        Update: {
+          bio?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          name?: string
+          topic?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
