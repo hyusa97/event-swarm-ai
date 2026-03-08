@@ -4,6 +4,7 @@ import {
   Mail,
   Share2,
   CalendarClock,
+  ShieldAlert,
   Cpu,
   BarChart3,
   Settings,
