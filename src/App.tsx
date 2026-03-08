@@ -9,6 +9,7 @@ import Participants from "./pages/Participants";
 import EmailAutomation from "./pages/EmailAutomation";
 import SocialMedia from "./pages/SocialMedia";
 import Scheduler from "./pages/Scheduler";
+import CrisisManagement from "./pages/CrisisManagement";
 import SwarmControl from "./pages/SwarmControl";
 import Analytics from "./pages/Analytics";
 import SettingsPage from "./pages/Settings";
@@ -29,6 +30,7 @@ const App = () => (
             <Route path="/email-automation" element={<EmailAutomation />} />
             <Route path="/social-media" element={<SocialMedia />} />
             <Route path="/scheduler" element={<Scheduler />} />
+            <Route path="/crisis-management" element={<CrisisManagement />} />
             <Route path="/swarm-control" element={<SwarmControl />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/settings" element={<SettingsPage />} />
