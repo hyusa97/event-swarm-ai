@@ -23,6 +23,8 @@ interface Speaker {
   bio: string | null;
   email: string | null;
   topic: string | null;
+  availability_start: string | null;
+  availability_end: string | null;
 }
 
 interface Room {
@@ -40,6 +42,7 @@ interface Session {
   start_time: string | null;
   end_time: string | null;
   duration_minutes: number;
+  preferred_time: string | null;
   status: string;
   has_conflict: boolean;
   conflict_note: string | null;
@@ -59,9 +62,10 @@ const Scheduler = () => {
   const [eventDate, setEventDate] = useState("2026-03-15");
 
   // Form states
-  const [newSpeaker, setNewSpeaker] = useState({ name: "", bio: "", email: "", topic: "" });
+  const [newSpeaker, setNewSpeaker] = useState({ name: "", bio: "", email: "", topic: "", availability_start: "09:00", availability_end: "18:00" });
+  const [editingSpeakerId, setEditingSpeakerId] = useState<string | null>(null);
   const [newRoom, setNewRoom] = useState({ name: "", capacity: "" });
-  const [newSession, setNewSession] = useState({ title: "", description: "", speaker_id: "", room_id: "", duration_minutes: "60" });
+  const [newSession, setNewSession] = useState({ title: "", description: "", speaker_id: "", room_id: "", duration_minutes: "60", preferred_time: "09:00" });
   const [speakerDialogOpen, setSpeakerDialogOpen] = useState(false);
   const [roomDialogOpen, setRoomDialogOpen] = useState(false);
   const [sessionDialogOpen, setSessionDialogOpen] = useState(false);
@@ -77,22 +81,59 @@ const Scheduler = () => {
       supabase.from("rooms").select("*").order("name"),
       supabase.from("sessions").select("*, speakers(*), rooms(*)").order("start_time", { ascending: true, nullsFirst: false }),
     ]);
-    if (sp.data) setSpeakers(sp.data);
-    if (rm.data) setRooms(rm.data);
+    if (sp.data) setSpeakers(sp.data as any);
+    if (rm.data) setRooms(rm.data as any);
     if (ss.data) setSessions(ss.data as any);
   }, []);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   // CRUD
-  const addSpeaker = async () => {
+  const handleSpeakerSubmit = async () => {
     if (!newSpeaker.name) return;
-    const { error } = await supabase.from("speakers").insert({ name: newSpeaker.name, bio: newSpeaker.bio || null, email: newSpeaker.email || null, topic: newSpeaker.topic || null });
-    if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
-    setNewSpeaker({ name: "", bio: "", email: "", topic: "" });
+
+    if (editingSpeakerId) {
+      const { error } = await supabase.from("speakers").update({
+        name: newSpeaker.name,
+        bio: newSpeaker.bio || null,
+        email: newSpeaker.email || null,
+        topic: newSpeaker.topic || null,
+        availability_start: newSpeaker.availability_start,
+        availability_end: newSpeaker.availability_end
+      }).eq("id", editingSpeakerId);
+
+      if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
+      toast({ title: "Speaker updated" });
+    } else {
+      const { error } = await supabase.from("speakers").insert({
+        name: newSpeaker.name,
+        bio: newSpeaker.bio || null,
+        email: newSpeaker.email || null,
+        topic: newSpeaker.topic || null,
+        availability_start: newSpeaker.availability_start,
+        availability_end: newSpeaker.availability_end
+      });
+      if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
+      toast({ title: "Speaker added" });
+    }
+
+    setNewSpeaker({ name: "", bio: "", email: "", topic: "", availability_start: "09:00", availability_end: "18:00" });
+    setEditingSpeakerId(null);
     setSpeakerDialogOpen(false);
     fetchAll();
-    toast({ title: "Speaker added" });
+  };
+
+  const openEditSpeaker = (sp: Speaker) => {
+    setNewSpeaker({
+      name: sp.name,
+      email: sp.email || "",
+      topic: sp.topic || "",
+      bio: sp.bio || "",
+      availability_start: sp.availability_start || "09:00",
+      availability_end: sp.availability_end || "18:00"
+    });
+    setEditingSpeakerId(sp.id);
+    setSpeakerDialogOpen(true);
   };
 
   const addRoom = async () => {
@@ -112,10 +153,11 @@ const Scheduler = () => {
       description: newSession.description || null,
       speaker_id: newSession.speaker_id || null,
       room_id: newSession.room_id || null,
+      preferred_time: newSession.preferred_time || null,
       duration_minutes: parseInt(newSession.duration_minutes) || 60,
     });
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
-    setNewSession({ title: "", description: "", speaker_id: "", room_id: "", duration_minutes: "60" });
+    setNewSession({ title: "", description: "", speaker_id: "", room_id: "", duration_minutes: "60", preferred_time: "09:00" });
     setSessionDialogOpen(false);
     fetchAll();
     toast({ title: "Session added" });
@@ -144,15 +186,25 @@ const Scheduler = () => {
         room_name: s.rooms?.name || null,
         room_id: s.room_id,
         duration_minutes: s.duration_minutes,
+        preferred_time: s.preferred_time,
+        speaker_availability_start: s.speakers?.availability_start,
+        speaker_availability_end: s.speakers?.availability_end
       }));
       const roomsPayload = rooms.map(r => ({ id: r.id, name: r.name }));
 
-      const { data, error } = await supabase.functions.invoke("optimize-schedule", {
-        body: { sessions: sessionsPayload, rooms: roomsPayload, event_date: eventDate, event_start_hour: "09:00", event_end_hour: "18:00" },
+      const response = await fetch("http://localhost:8000/api/auto-schedule", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessions: sessionsPayload,
+          rooms: roomsPayload,
+          event_date: eventDate,
+          event_start_hour: "09:00",
+          event_end_hour: "18:00"
+        })
       });
-
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Optimization failed");
 
       // Apply schedule to sessions
       const schedule = data.schedule || [];
@@ -245,16 +297,26 @@ const Scheduler = () => {
           <div>
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-semibold flex items-center gap-2"><Users className="h-3.5 w-3.5 text-neon-cyan" />Speakers</h2>
-              <Dialog open={speakerDialogOpen} onOpenChange={setSpeakerDialogOpen}>
+              <Dialog open={speakerDialogOpen} onOpenChange={(open) => {
+                setSpeakerDialogOpen(open);
+                if (!open) {
+                  setNewSpeaker({ name: "", bio: "", email: "", topic: "", availability_start: "09:00", availability_end: "18:00" });
+                  setEditingSpeakerId(null);
+                }
+              }}>
                 <DialogTrigger asChild><Button variant="outline" size="sm"><Plus className="h-3 w-3" />Add Speaker</Button></DialogTrigger>
                 <DialogContent>
-                  <DialogHeader><DialogTitle>Add Speaker</DialogTitle></DialogHeader>
+                  <DialogHeader><DialogTitle>{editingSpeakerId ? "Edit Speaker" : "Add Speaker"}</DialogTitle></DialogHeader>
                   <div className="space-y-3">
                     <div className="space-y-1"><Label>Name *</Label><Input placeholder="Dr. Sarah Chen" value={newSpeaker.name} onChange={e => setNewSpeaker(p => ({ ...p, name: e.target.value }))} /></div>
                     <div className="space-y-1"><Label>Email</Label><Input placeholder="sarah@example.com" value={newSpeaker.email} onChange={e => setNewSpeaker(p => ({ ...p, email: e.target.value }))} /></div>
                     <div className="space-y-1"><Label>Topic</Label><Input placeholder="AI & Machine Learning" value={newSpeaker.topic} onChange={e => setNewSpeaker(p => ({ ...p, topic: e.target.value }))} /></div>
+                    <div className="flex gap-2">
+                      <div className="space-y-1 flex-1"><Label>Availability Start</Label><Input type="time" value={newSpeaker.availability_start} onChange={e => setNewSpeaker(p => ({ ...p, availability_start: e.target.value }))} /></div>
+                      <div className="space-y-1 flex-1"><Label>Availability End</Label><Input type="time" value={newSpeaker.availability_end} onChange={e => setNewSpeaker(p => ({ ...p, availability_end: e.target.value }))} /></div>
+                    </div>
                     <div className="space-y-1"><Label>Bio</Label><Textarea placeholder="Brief bio..." value={newSpeaker.bio} onChange={e => setNewSpeaker(p => ({ ...p, bio: e.target.value }))} /></div>
-                    <Button onClick={addSpeaker} className="w-full">Add Speaker</Button>
+                    <Button onClick={handleSpeakerSubmit} className="w-full">{editingSpeakerId ? "Save Changes" : "Add Speaker"}</Button>
                   </div>
                 </DialogContent>
               </Dialog>
@@ -270,7 +332,10 @@ const Scheduler = () => {
                       {sp.topic && <p className="text-xs text-muted-foreground truncate">{sp.topic}</p>}
                       {sp.email && <p className="text-[10px] text-muted-foreground font-mono">{sp.email}</p>}
                     </div>
-                    <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => deleteSpeaker(sp.id)}><Trash2 className="h-3 w-3 text-destructive" /></Button>
+                    <div className="flex shrink-0">
+                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openEditSpeaker(sp)}><Edit3 className="h-3 w-3 text-muted-foreground hover:text-primary" /></Button>
+                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => deleteSpeaker(sp.id)}><Trash2 className="h-3 w-3 text-destructive" /></Button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -332,6 +397,7 @@ const Scheduler = () => {
                         <SelectContent>{rooms.map(rm => <SelectItem key={rm.id} value={rm.id}>{rm.name}</SelectItem>)}</SelectContent>
                       </Select>
                     </div>
+                    <div className="space-y-1"><Label>Preferred Time</Label><Input type="time" value={newSession.preferred_time} onChange={e => setNewSession(p => ({ ...p, preferred_time: e.target.value }))} /></div>
                     <div className="space-y-1"><Label>Duration (minutes)</Label><Input type="number" value={newSession.duration_minutes} onChange={e => setNewSession(p => ({ ...p, duration_minutes: e.target.value }))} /></div>
                     <Button onClick={addSession} className="w-full">Add Session</Button>
                   </div>
@@ -353,7 +419,10 @@ const Scheduler = () => {
                         {s.speakers && <span className="flex items-center gap-1"><Users className="h-3 w-3" />{s.speakers.name}</span>}
                         {s.rooms && <span className="flex items-center gap-1"><Building2 className="h-3 w-3" />{s.rooms.name}</span>}
                         <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{s.duration_minutes}min</span>
-                        {s.start_time && <span className="font-mono">{format(parseISO(s.start_time), "HH:mm")} — {s.end_time ? format(parseISO(s.end_time), "HH:mm") : ""}</span>}
+                      </div>
+                      <div className="flex flex-col gap-1 mt-2 text-xs text-muted-foreground">
+                        {s.preferred_time && <span className="flex items-center gap-1">Preferred: <b>{s.preferred_time}</b></span>}
+                        {s.start_time && <span className="font-mono text-primary flex items-center gap-1">Scheduled: {format(parseISO(s.start_time), "HH:mm")} — {s.end_time ? format(parseISO(s.end_time), "HH:mm") : ""}</span>}
                       </div>
                     </div>
                     {s.has_conflict ? (

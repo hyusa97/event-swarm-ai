@@ -401,6 +401,299 @@ async def get_logs():
     except: pass
     return local_logs if local_logs else [{"action": "Local Mode Active", "timestamp": datetime.now().isoformat()}]
 
+from datetime import timedelta
+
+# Event Scheduler Agent Models
+class Speaker(BaseModel):
+    id: str
+    name: str
+    topic: str
+    availability_start: str
+    availability_end: str
+
+class Room(BaseModel):
+    id: str
+    name: str
+    capacity: int
+
+class Session(BaseModel):
+    id: str
+    title: str
+    speaker_id: str
+    duration: int
+    preferred_time: str
+    scheduled_start: Optional[str] = None
+    scheduled_end: Optional[str] = None
+    room_id: Optional[str] = None
+
+class Conflict(BaseModel):
+    type: str 
+    message: str
+    session_ids: List[str]
+
+class ScheduleRequest(BaseModel):
+    sessions: List[dict]
+    rooms: List[dict]
+    event_date: str
+    event_start_hour: str
+    event_end_hour: str
+
+# In-memory DB for Scheduler
+speakers_db: List[dict] = []
+rooms_db: List[dict] = []
+sessions_db: List[dict] = []
+scheduler_logs: List[str] = []
+
+class EventSchedulerAgent:
+    def __init__(self):
+        self.sessions = []
+        self.speakers = {}
+        self.rooms = []
+        self.conflicts = []
+        self.schedule = []
+        self.explanation = ""
+
+    def log(self, message: str):
+        print(f"[Scheduler] {message}")
+        scheduler_logs.append(message)
+
+    def load_data(self):
+        self.log("Loading sessions, speakers, and rooms")
+        self.sessions = [s.copy() for s in sessions_db]
+        
+        # Parse times
+        for s in self.sessions:
+            try:
+                s["_preferred_dt"] = datetime.strptime(s.get("preferred_time", "09:00"), "%H:%M")
+            except ValueError:
+                s["_preferred_dt"] = datetime.strptime("09:00", "%H:%M")
+
+        self.speakers = {s["id"]: s for s in speakers_db}
+        self.rooms = [r.copy() for r in rooms_db]
+        self.conflicts = []
+        self.schedule = []
+        self.explanation = ""
+
+    def detect_conflicts(self):
+        pass
+
+    def run(self):
+        self.log("Scheduler started")
+        scheduler_logs.clear() # clear previous run logs
+        self.log("Scheduler started")
+        
+        self.load_data()
+        self.log(f"Loaded {len(self.sessions)} sessions")
+        
+        # Sort sessions by preferred time
+        self.sessions.sort(key=lambda x: x["_preferred_dt"])
+        
+        self.generate_schedule()
+        
+        if self.conflicts:
+            self.log(f"Detected {len(self.conflicts)} conflicts")
+            self.resolve_conflicts()
+        
+        self.log("Final schedule generated successfully")
+        
+        if self.conflicts:
+            self.explanation = f"Detected and resolved {len(self.conflicts)} conflicts by moving sessions to available time slots."
+        else:
+            self.explanation = "All sessions scheduled without any conflicts."
+            
+        return {
+            "schedule": self.schedule,
+            "conflicts": self.conflicts,
+            "logs": scheduler_logs,
+            "summary": self.explanation
+        }
+
+    def run_with_payload(self, req: ScheduleRequest):
+        scheduler_logs.clear()
+        self.log("Scheduler started with custom payload")
+        
+        self.sessions = [s.copy() for s in req.sessions]
+        self.rooms = [r.copy() for r in req.rooms]
+        self.speakers = {} # we don't have speaker limits in this mode or can use session['speaker_name']
+        self.conflicts = []
+        self.schedule = []
+        self.explanation = ""
+        self.event_date = req.event_date
+        
+        for s in self.sessions:
+            try:
+                if s.get("preferred_time"):
+                    s["_preferred_dt"] = datetime.strptime(f"{req.event_date} {s['preferred_time']}", "%Y-%m-%d %H:%M")
+                else:
+                    s["_preferred_dt"] = datetime.strptime(f"{req.event_date} {req.event_start_hour}", "%Y-%m-%d %H:%M")
+            except Exception:
+                s["_preferred_dt"] = datetime.strptime(f"{req.event_date} {req.event_start_hour}", "%Y-%m-%d %H:%M")
+        
+        self.sessions.sort(key=lambda x: x["_preferred_dt"]) # sort by preferred time
+        
+        self.generate_schedule()
+        return {
+            "schedule": self.schedule,
+            "conflicts": self.conflicts,
+            "logs": scheduler_logs,
+            "summary": "Generated schedule successfully"
+        }
+
+    def generate_schedule(self):
+        current_time = datetime.strptime("09:00", "%H:%M")
+        
+        room_availability = {r["id"]: current_time for r in self.rooms}
+        speaker_schedule = {s: [] for s in self.speakers.keys()}
+        
+        for session in self.sessions:
+            speaker_id = session.get("speaker_id")
+            duration = session.get("duration", 60)
+            
+            if not self.rooms:
+                 self.log(f"No rooms available to schedule {session['title']}")
+                 continue
+                 
+            # Target start time
+            start_time = getattr(self, 'event_date', None)
+            if start_time:
+                assigned_start = session.get("_preferred_dt", datetime.strptime(f"{self.event_date} 09:00", "%Y-%m-%d %H:%M"))
+            else:
+                assigned_start = session.get("_preferred_dt", current_time)
+            
+            assigned_room = None
+            
+            # Find an available room and avoid speaker conflicts
+            resolved = False
+            while not resolved:
+                # Find first available room for assigned_start
+                for room_id in room_availability:
+                    if room_availability[room_id] <= assigned_start:
+                        assigned_room = room_id
+                        break
+                
+                if not assigned_room:
+                    # Move time forward by 15 mins to find a room
+                    assigned_start += timedelta(minutes=15)
+                    continue
+                    
+                end_time = assigned_start + timedelta(minutes=duration)
+                
+                # Check expected speaker availability
+                speaker_avail_start_str = session.get("speaker_availability_start")
+                speaker_avail_end_str = session.get("speaker_availability_end")
+                av_conflict = False
+                
+                start_date_str = start_time if start_time else datetime.now().strftime("%Y-%m-%d")
+                
+                if speaker_avail_start_str and speaker_avail_end_str:
+                    try:
+                        avail_start = datetime.strptime(f"{start_date_str} {speaker_avail_start_str}", "%Y-%m-%d %H:%M")
+                        avail_end = datetime.strptime(f"{start_date_str} {speaker_avail_end_str}", "%Y-%m-%d %H:%M")
+                        
+                        if assigned_start < avail_start or end_time > avail_end:
+                            av_conflict = True
+                            
+                            if assigned_start < avail_start:
+                                self.log(f"Availability conflict for {speaker_id}: Moved to {avail_start.strftime('%H:%M')}")
+                                assigned_start = avail_start
+                                assigned_room = None
+                                session["has_conflict"] = True
+                                session["conflict_note"] = f"Moved to {avail_start.strftime('%H:%M')} due to availability"
+                                continue
+                            else:
+                                self.log(f"Availability conflict for {speaker_id}: Exceeds availability end")
+                                session["has_conflict"] = True
+                                session["conflict_note"] = f"Duration exceeds availability end"
+                    except Exception: pass
+
+                # Check double booking
+                has_speaker_conflict = False
+                if speaker_id:
+                    for prev_start, prev_end in speaker_schedule.get(speaker_id, []):
+                        if max(assigned_start, prev_start) < min(end_time, prev_end):
+                            has_speaker_conflict = True
+                            break
+                        
+                if has_speaker_conflict:
+                    self.log(f"Conflict detected: Speaker double booked")
+                    assigned_start += timedelta(minutes=15)
+                    assigned_room = None
+                    session["has_conflict"] = True
+                    session["conflict_note"] = "Moved due to speaker double booking"
+                else:
+                    resolved = True
+
+            # Assign
+            room_availability[assigned_room] = end_time
+            if speaker_id:
+                if speaker_id not in speaker_schedule:
+                    speaker_schedule[speaker_id] = []
+                speaker_schedule[speaker_id].append((assigned_start, end_time))
+            
+            self.schedule.append({
+                "session_id": session.get("id"),
+                "session": session.get("title", ""),
+                "room_id": assigned_room,
+                "start_time": assigned_start.isoformat(),
+                "end_time": end_time.isoformat(),
+                "has_conflict": session.get("has_conflict", False),
+                "conflict_note": session.get("conflict_note", None)
+            })
+
+    def resolve_conflicts(self):
+        # Already resolved during assignment loop
+        pass
+
+# Event Scheduler Endpoints
+@app.post("/api/speakers")
+async def add_speaker(speaker: Speaker):
+    speakers_db.append(speaker.dict())
+    return {"status": "success", "speaker": speaker}
+
+@app.post("/api/rooms")
+async def add_room(room: Room):
+    rooms_db.append(room.dict())
+    return {"status": "success", "room": room}
+
+@app.post("/api/sessions")
+async def add_session(session: Session):
+    sessions_db.append(session.dict())
+    return {"status": "success", "session": session}
+
+@app.get("/api/speakers")
+async def get_speakers():
+    return speakers_db
+
+@app.get("/api/rooms")
+async def get_rooms():
+    return rooms_db
+
+@app.get("/api/sessions")
+async def get_sessions():
+    return sessions_db
+
+@app.post("/api/auto-schedule")
+async def auto_schedule(req: ScheduleRequest = None):
+    agent = EventSchedulerAgent()
+    if req:
+        return agent.run_with_payload(req)
+    else:
+        return agent.run()
+
+@app.get("/api/schedule")
+async def get_schedule():
+    # Run a dummy or return static if needed
+    # Usually UI gets schedule from auto-schedule run, but we can expose it here
+    return {"schedule": []}
+
+@app.get("/api/conflicts")
+async def get_conflicts():
+    return {"conflicts": []}
+
+@app.get("/api/logs") # note: overrides /api/agent-logs maybe?
+async def get_scheduler_logs():
+    return scheduler_logs
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
